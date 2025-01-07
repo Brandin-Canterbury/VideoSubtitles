@@ -4,7 +4,7 @@ namespace VideoTranslator
 {
     public partial class MainForm : Form
     {
-        private TextBox _apiKeyTextBox;
+        public TextBox ApiKeyTextBox;
         private Button _saveApiKeyButton;
         private Button _selectFileButton;
         public TextBox FilePathTextBox;
@@ -20,25 +20,25 @@ namespace VideoTranslator
 
         public MainForm()
         {
-            _controller = new MainController(this);
             InitializeComponents();
             LoadSavedApiKey();
             ValidateProcessButton();
             ApplyDarkTheme();
+            _controller = new MainController(this);
         }
 
         private void InitializeComponents()
         {
-            this.Text = "Video to SRT Processor";
-            this.Size = new System.Drawing.Size(600, 420);
-            this.MinimumSize = new System.Drawing.Size(600, 420);
+            Text = "Video to Subtitle Creator";
+            Size = new Size(600, 600);
+            MinimumSize = new Size(600, 600);
 
             var apiKeyLabel = new Label { Text = "OpenAI API Key:", Top = 20, Left = 10, Width = 120 };
-            _apiKeyTextBox = new TextBox { Top = 20, Left = 140, Width = 250 };
-            _apiKeyTextBox.TextChanged += (sender, e) => ValidateProcessButton();
+            ApiKeyTextBox = new TextBox { Top = 20, Left = 140, Width = 250 };
+            ApiKeyTextBox.TextChanged += (sender, e) => ValidateProcessButton();
 
             _saveApiKeyButton = new Button { Text = "Save", Top = 20, Left = 400, Width = 70 };
-            _saveApiKeyButton.Click += (sender, e) => _controller.SaveApiKey(_apiKeyTextBox.Text);
+            _saveApiKeyButton.Click += (sender, e) => _controller.SaveApiKey(ApiKeyTextBox.Text);
 
             var fileLabel = new Label { Text = "Selected File:", Top = 60, Left = 10, Width = 120 };
             FilePathTextBox = new TextBox { Top = 60, Left = 140, Width = 250, ReadOnly = true };
@@ -52,7 +52,7 @@ namespace VideoTranslator
 
             _progressBar = new ProgressBar
             {
-                Top = 140, Left = 20, Width = (this.Width - 50), Height = 40, Visible = true, ForeColor = Color.RoyalBlue,
+                Top = 140, Left = 20, Width = (Width - 50), Height = 40, Visible = true, ForeColor = Color.RoyalBlue,
                 BackColor = Color.FromArgb(50, 50, 50), Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
                 
             };
@@ -76,29 +76,29 @@ namespace VideoTranslator
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
             };
 
-            this.Controls.Add(apiKeyLabel);
-            this.Controls.Add(_apiKeyTextBox);
-            this.Controls.Add(_saveApiKeyButton);
-            this.Controls.Add(fileLabel);
-            this.Controls.Add(FilePathTextBox);
-            this.Controls.Add(_selectFileButton);
-            this.Controls.Add(_processButton);
-            this.Controls.Add(_progressBar);
-            this.Controls.Add(_fileSizeLabel);
-            this.Controls.Add(_processingRateLabel);
-            this.Controls.Add(_startTimeLabel);
-            this.Controls.Add(_elapsedTimeLabel);
-            this.Controls.Add(_estimatedCompletionTimeLabel);
-            this.Controls.Add(_logWindow);
+            Controls.Add(apiKeyLabel);
+            Controls.Add(ApiKeyTextBox);
+            Controls.Add(_saveApiKeyButton);
+            Controls.Add(fileLabel);
+            Controls.Add(FilePathTextBox);
+            Controls.Add(_selectFileButton);
+            Controls.Add(_processButton);
+            Controls.Add(_progressBar);
+            Controls.Add(_fileSizeLabel);
+            Controls.Add(_processingRateLabel);
+            Controls.Add(_startTimeLabel);
+            Controls.Add(_elapsedTimeLabel);
+            Controls.Add(_estimatedCompletionTimeLabel);
+            Controls.Add(_logWindow);
 
 
-            this.Resize += MainForm_Resize;
+            Resize += MainForm_Resize;
         }
 
         private void ApplyDarkTheme()
         {
-            this.BackColor = Color.FromArgb(30, 30, 30);
-            foreach (Control control in this.Controls)
+            BackColor = Color.FromArgb(30, 30, 30);
+            foreach (Control control in Controls)
             {
                 if (control is Label label)
                 {
@@ -130,16 +130,16 @@ namespace VideoTranslator
         {
             // Ensure the top of the log window stays fixed while resizing
             _logWindow.Top = 330;
-            _logWindow.Height = this.ClientSize.Height - _logWindow.Top - 10; // Adjust height dynamically
+            _logWindow.Height = ClientSize.Height - _logWindow.Top - 10; // Adjust height dynamically
         }
 
 
         private void LoadSavedApiKey()
         {
-            string savedApiKey = FileManager.LoadApiKey();
+            var savedApiKey = FileManager.LoadApiKey();
             if (!string.IsNullOrEmpty(savedApiKey))
             {
-                _apiKeyTextBox.Text = savedApiKey;
+                ApiKeyTextBox.Text = savedApiKey;
                 AppendToLog("API Key loaded from file.");
             }
         }
@@ -147,10 +147,10 @@ namespace VideoTranslator
         private void ValidateProcessButton()
         {
             string[] validExtensions = { ".mp4", ".mkv", ".avi" };
-            bool isApiKeyValid = !string.IsNullOrWhiteSpace(_apiKeyTextBox.Text);
-            bool isFilePathValid = !string.IsNullOrWhiteSpace(FilePathTextBox.Text) &&
-                                   validExtensions.Any(ext =>
-                                       FilePathTextBox.Text.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
+            var isApiKeyValid = !string.IsNullOrWhiteSpace(ApiKeyTextBox.Text);
+            var isFilePathValid = !string.IsNullOrWhiteSpace(FilePathTextBox.Text) &&
+                                  validExtensions.Any(ext =>
+                                      FilePathTextBox.Text.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
             _processButton.Enabled = isApiKeyValid && isFilePathValid;
         }
 

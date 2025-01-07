@@ -5,13 +5,17 @@ namespace VideoTranslator.Controllers;
 public class MainController
 {
     private readonly MainForm _view;
-    private readonly SubtitleService _subtitleService;
+    private SubtitleService _subtitleService;
 
     public MainController(MainForm view)
     {
         _view = view;
-        string apiKey = FileManager.LoadApiKey();
-        _subtitleService = new SubtitleService(apiKey, Log);
+        GetApiKey();
+    }
+
+    private void GetApiKey()
+    {
+        _view.ApiKeyTextBox.Text = FileManager.LoadApiKey();
     }
 
     public void SaveApiKey(string apiKey)
@@ -36,7 +40,7 @@ public class MainController
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                string videoPath = openFileDialog.FileName;
+                var videoPath = openFileDialog.FileName;
                 FileManager.SaveLastDirectory(Path.GetDirectoryName(videoPath));
                 _view.FilePathTextBox.Text = videoPath;
                 Log($"File selected: {videoPath}", false);
@@ -46,7 +50,8 @@ public class MainController
 
     public void ProcessSelectedFile()
     {
-        string filePath = _view.FilePathTextBox.Text;
+        _subtitleService = new SubtitleService(_view.ApiKeyTextBox.Text, Log);
+        var filePath = _view.FilePathTextBox.Text;
 
         if (string.IsNullOrWhiteSpace(filePath))
         {
@@ -59,20 +64,15 @@ public class MainController
 
     private async void ProcessVideo(string videoPath)
     {
-        string outputSrtPath = Path.ChangeExtension(videoPath, ".srt");
+        var outputSrtPath = Path.ChangeExtension(videoPath, ".srt");
 
         try
         {
             _view.AppendToLog("Processing started.");
             _view.UpdateProgress(0);
 
-            await _subtitleService.ExtractAndTranslateAudio(videoPath, outputSrtPath, progress =>
-            {
-                InvokeOnMainThread(() =>
-                {
-                    _view.UpdateProgress((int)progress);
-                });
-            });
+            await _subtitleService.ExtractAndTranslateAudio(videoPath, outputSrtPath,
+                progress => { InvokeOnMainThread(() => { _view.UpdateProgress((int)progress); }); });
 
             InvokeOnMainThread(() =>
             {

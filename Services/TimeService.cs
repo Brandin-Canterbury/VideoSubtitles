@@ -27,13 +27,13 @@ public class TimeService
 
     public double GetProcessingRateMBps()
     {
-        double elapsedSeconds = _stopwatch.Elapsed.TotalSeconds;
+        var elapsedSeconds = _stopwatch.Elapsed.TotalSeconds;
         return elapsedSeconds > 0 ? (_totalBytesProcessed / (1024.0 * 1024.0)) / elapsedSeconds : 0.0;
     }
 
     public TimeSpan GetEstimatedRemainingTime()
     {
-        double rate = GetProcessingRateMBps();
+        var rate = GetProcessingRateMBps();
         double remainingBytes = _totalFileSizeInBytes - _totalBytesProcessed;
         return rate > 0 ? TimeSpan.FromSeconds(remainingBytes / (rate * 1024.0 * 1024.0)) : TimeSpan.MaxValue;
     }

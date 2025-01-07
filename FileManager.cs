@@ -33,8 +33,8 @@ public static class FileManager
 
     public static string GenerateSubtitleFilePath(string videoPath)
     {
-        string directory = Path.GetDirectoryName(videoPath);
-        string fileName = Path.GetFileNameWithoutExtension(videoPath);
+        var directory = Path.GetDirectoryName(videoPath);
+        var fileName = Path.GetFileNameWithoutExtension(videoPath);
         return Path.Combine(directory, $"{fileName}_subtitles.srt");
     }
 }
