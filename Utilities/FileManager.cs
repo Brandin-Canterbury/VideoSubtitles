@@ -1,4 +1,4 @@
-namespace VideoTranslator;
+namespace VideoTranslator.Utilities;
 
 
 public static class FileManager
@@ -24,6 +24,14 @@ public static class FileManager
     public static string GetLastDirectory()
     {
         return File.Exists(LastDirectoryFile) ? File.ReadAllText(LastDirectoryFile) : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    }
+    
+    public static void CreateDirectoryIfNotExists(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            Directory.CreateDirectory(path);
+        }
     }
 
     public static string GenerateAudioFilePath()

@@ -3,120 +3,135 @@ using System.Text;
 using System.Text.Json;
 using NAudio.Lame;
 using NAudio.Wave;
+using VideoTranslator.Enums;
+using VideoTranslator.Utilities;
 
 namespace VideoTranslator.Services;
 
-public class SubtitleService
+public class SubtitleService(FormUpdateService formUpdateService)
 {
-    private readonly HttpClient _httpClient;
-    private readonly Action<string, bool> _logAction;
-
-    public SubtitleService(string apiKey, Action<string, bool> logAction)
+    private readonly HttpClient _httpClient = new()
     {
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            throw new ArgumentException("API Key must be provided.");
-        }
+        DefaultRequestHeaders = { Authorization = new AuthenticationHeaderValue("Bearer", FileManager.LoadApiKey()) }
+    };
 
-        _httpClient = new HttpClient
-        {
-            DefaultRequestHeaders = { Authorization = new AuthenticationHeaderValue("Bearer", apiKey) }
-        };
+    private string _tempPath = string.Empty;
+    private string _outputPath = string.Empty;
+    private string _videoPath = string.Empty;
+    private string _mp3Path = string.Empty;
 
-        _logAction = logAction ?? throw new ArgumentNullException(nameof(logAction));
+    private bool _cancel;
+
+    private List<string> _chunkPaths = [];
+
+    private const string URL = "https://api.openai.com/v1/audio/translations";
+
+    public void SetPaths(string videoPath, string outputSrtPath)
+    {
+        _tempPath = Path.Combine(Path.GetTempPath(), "VideoTranslator");
+        FileManager.CreateDirectoryIfNotExists(_tempPath);
+        _videoPath = videoPath;
+        _outputPath = outputSrtPath;
+        _mp3Path = Path.Combine(_tempPath, Path.ChangeExtension(Path.GetFileName(_videoPath), ".mp3"));
     }
 
-    public async Task ExtractAndTranslateAudio(string videoPath, string outputSrtPath, Action<double> progressCallback)
+    public void CancelActions()
     {
-        string mp3Path = Path.ChangeExtension(outputSrtPath, ".mp3");
-
+        _cancel = true;
+    }
+    
+    public async Task ExtractAudio()
+    {
         try
         {
-            _logAction?.Invoke("Starting audio extraction to MP3.", false);
+            _cancel = false;
+            formUpdateService.UpdateSecondaryProcess(0);
+            formUpdateService.LogMessage("Starting audio extraction to MP3.");
 
-            using (var reader = new MediaFoundationReader(videoPath))
-            using (var mp3Writer = new LameMP3FileWriter(mp3Path, reader.WaveFormat, LAMEPreset.STANDARD))
+            await using (var reader = new MediaFoundationReader(_videoPath))
+            await using (var mp3Writer = new LameMP3FileWriter(_mp3Path, reader.WaveFormat, LAMEPreset.STANDARD))
             {
                 var buffer = new byte[4096];
                 int bytesRead;
                 while ((bytesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
                 {
+                    if (_cancel) break;
                     mp3Writer.Write(buffer, 0, bytesRead);
+                    SetSecondaryProgress(reader.Position, reader.Length);
                 }
             }
 
-            _logAction?.Invoke($"Audio extraction to MP3 completed successfully. Saved to: {mp3Path}", false);
+            formUpdateService.LogMessage($"Audio extraction to MP3 completed successfully. Saved to: {_mp3Path}",
+                LogType.Success);
 
-            // Split MP3 into chunks
-            var chunkPaths = SplitAudioIntoChunks(mp3Path, 25 * 1024 * 1024); // 25MB max size
 
-            // Translate chunks and generate SRT
-            await TranslateChunksToSrt(chunkPaths, outputSrtPath);
         }
         catch (Exception ex)
         {
-            _logAction?.Invoke($"Error during audio extraction or translation: {ex.Message}", true);
-            throw;
-        }
-        finally
-        {
-            Cleanup(mp3Path);
+            formUpdateService.LogMessage($"Audio extraction to MP3 completed successfully. Saved to: {_mp3Path}",
+                LogType.Success);
+            formUpdateService.LogMessage($"Error during audio extraction or translation: {ex.Message}", LogType.Error);
         }
     }
 
-    private List<string> SplitAudioIntoChunks(string mp3Path, long maxSizeInBytes)
+    public void SplitAudioIntoChunks(long maxSizeInBytes)
     {
-        var chunkPaths = new List<string>();
-        using var reader = new MediaFoundationReader(mp3Path);
-
-        int chunkIndex = 0;
-        long currentChunkSize = 0;
-        var writer = CreateChunkWriter(mp3Path, chunkIndex, reader.WaveFormat);
-
-        var buffer = new byte[4096];
-        int bytesRead;
-        while ((bytesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
+        try
         {
-            if (currentChunkSize + bytesRead > maxSizeInBytes)
+            formUpdateService.UpdateSecondaryProcess(0);
+            _chunkPaths = new List<string>();
+            using var reader = new MediaFoundationReader(_mp3Path);
+
+            var completedChunks = 0;
+            var chunkIndex = 0;
+            long currentChunkSize = 0;
+            var writer = CreateChunkWriter(chunkIndex, reader.WaveFormat);
+
+            var buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
             {
-                writer.Dispose();
-                chunkPaths.Add(GetChunkPath(mp3Path, chunkIndex));
-                chunkIndex++;
-                currentChunkSize = 0;
-                writer = CreateChunkWriter(mp3Path, chunkIndex, reader.WaveFormat);
+                if (_cancel) break;
+                if (currentChunkSize + bytesRead > maxSizeInBytes)
+                {
+                    writer.Dispose();
+                    var chunkPath = GetChunkPath(chunkIndex);
+                    _chunkPaths.Add(chunkPath);
+                    chunkIndex++;
+                    completedChunks++;
+                    
+                    formUpdateService.LogMessage($"Creating Chunk {completedChunks}/{_chunkPaths.Count}: {chunkPath}");
+                    SetSecondaryProgress(completedChunks, _chunkPaths.Count);
+                    currentChunkSize = 0;
+                    writer = CreateChunkWriter(chunkIndex, reader.WaveFormat);
+                }
+
+                writer.Write(buffer, 0, bytesRead);
+                currentChunkSize += bytesRead;
             }
 
-            writer.Write(buffer, 0, bytesRead);
-            currentChunkSize += bytesRead;
+            writer.Dispose();
+            _chunkPaths.Add(GetChunkPath(chunkIndex));
         }
-
-        writer.Dispose();
-        chunkPaths.Add(GetChunkPath(mp3Path, chunkIndex));
-
-        return chunkPaths;
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
     }
-
-    private LameMP3FileWriter CreateChunkWriter(string mp3Path, int chunkIndex, WaveFormat waveFormat)
-    {
-        string chunkPath = GetChunkPath(mp3Path, chunkIndex);
-        return new LameMP3FileWriter(chunkPath, waveFormat, LAMEPreset.STANDARD);
-    }
-
-    private string GetChunkPath(string mp3Path, int chunkIndex)
-    {
-        string directory = Path.GetDirectoryName(mp3Path);
-        string fileName = Path.GetFileNameWithoutExtension(mp3Path);
-        return Path.Combine(directory, $"{fileName}_chunk{chunkIndex}.mp3");
-    }
-
-    private async Task TranslateChunksToSrt(List<string> chunkPaths, string outputSrtPath)
+    
+    
+    public async Task TranslateChunksToSrt()
     {
         var srtEntries = new List<string>();
-        TimeSpan offset = TimeSpan.Zero;
+        var offset = TimeSpan.Zero;
+        var completedChunks = 0;
 
-        foreach (var chunkPath in chunkPaths)
+        foreach (var chunkPath in _chunkPaths)
         {
-            using var audioStream = File.OpenRead(chunkPath);
+            if (_cancel) break;
+            await using var audioStream = File.OpenRead(chunkPath);
+            formUpdateService.LogMessage($"Uploading Chunk: {completedChunks + 1}/{_chunkPaths.Count} to {URL}");
             var content = new MultipartFormDataContent
             {
                 { new StreamContent(audioStream), "file", Path.GetFileName(chunkPath) },
@@ -124,18 +139,34 @@ public class SubtitleService
                 { new StringContent("srt"), "response_format" }
             };
 
-            var response = await _httpClient.PostAsync("https://api.openai.com/v1/audio/translations", content);
+            var response = await _httpClient.PostAsync(URL, content);
             response.EnsureSuccessStatusCode();
 
             var srtContent = await response.Content.ReadAsStringAsync();
-            srtEntries.Add(AdjustTimestamps(srtContent, offset));
+            srtEntries.Add(srtContent);
 
             // Update offset
             var duration = GetAudioDuration(chunkPath);
             offset += duration;
+            completedChunks++;
+            formUpdateService.LogMessage($"Completed translation of chunk: {completedChunks}/{_chunkPaths.Count}");
+            SetSecondaryProgress(completedChunks, _chunkPaths.Count);
         }
 
-        File.WriteAllText(outputSrtPath, string.Join(Environment.NewLine, srtEntries));
+        await File.WriteAllTextAsync(_outputPath, string.Join(Environment.NewLine, srtEntries));
+    }
+
+    private LameMP3FileWriter CreateChunkWriter(int chunkIndex, WaveFormat waveFormat)
+    {
+        var chunkPath = GetChunkPath(chunkIndex);
+        return new LameMP3FileWriter(chunkPath, waveFormat, LAMEPreset.STANDARD);
+    }
+
+    private string GetChunkPath(int chunkIndex)
+    {
+        var directory = Path.GetDirectoryName(_mp3Path);
+        var fileName = Path.GetFileNameWithoutExtension(_mp3Path);
+        return Path.Combine(directory ?? string.Empty, $"{fileName}_chunk{chunkIndex}.mp3");
     }
 
     private string AdjustTimestamps(string srtContent, TimeSpan offset)
@@ -150,7 +181,8 @@ public class SubtitleService
                 var start = TimeSpan.Parse(parts[0].Trim());
                 var end = TimeSpan.Parse(parts[1].Trim());
 
-                adjustedContent.AppendLine($"{(start + offset):hh\\:mm\\:ss\\.fff} --> {(end + offset):hh\\:mm\\:ss\\.fff}");
+                adjustedContent.AppendLine(
+                    $"{(start + offset):hh\\:mm\\:ss\\.fff} --> {(end + offset):hh\\:mm\\:ss\\.fff}");
             }
             else
             {
@@ -161,34 +193,38 @@ public class SubtitleService
         return adjustedContent.ToString();
     }
 
-    private TimeSpan GetAudioDuration(string mp3Path)
+    private TimeSpan GetAudioDuration(string filePath)
     {
-        using var reader = new MediaFoundationReader(mp3Path);
+        using var reader = new MediaFoundationReader(filePath);
         return reader.TotalTime;
     }
 
-    public void Cleanup(string mp3Path = null)
+    public void Cleanup()
     {
         try
         {
-            _logAction?.Invoke("Starting cleanup of temporary files.", false);
-
-            if (!string.IsNullOrEmpty(mp3Path) && File.Exists(mp3Path))
-            {
-                File.Delete(mp3Path);
-                _logAction?.Invoke($"Deleted temporary MP3 file: {mp3Path}", false);
-            }
-
-            string tempDir = Path.Combine(Path.GetTempPath(), "chunks");
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, true);
-                _logAction("Temporary files cleaned up.", false);
-            }
+            formUpdateService.LogMessage("Starting cleanup of temporary files.");
+            if (!Directory.Exists(_tempPath)) return;
+            Directory.Delete(_tempPath, true);
+            formUpdateService.LogMessage("Temporary files cleaned up.");
+            formUpdateService.UpdateMainProcess(0);
+            formUpdateService.UpdateSecondaryProcess(0);
         }
         catch (Exception ex)
         {
-            _logAction?.Invoke($"Error during cleanup: {ex.Message}", true);
+            formUpdateService.LogMessage($"Error during cleanup: {ex.Message}", LogType.Error);
         }
+    }
+
+    private void SetSecondaryProgress(int lowNumber, int highNumber)
+    {
+        var percentage = lowNumber / highNumber * 100;
+        formUpdateService.UpdateSecondaryProcess(percentage);
+    }
+    
+    private void SetSecondaryProgress(long lowNumber, long highNumber)
+    {
+        var percentage = (int)(lowNumber / highNumber) * 100;
+        formUpdateService.UpdateSecondaryProcess(percentage);
     }
 }
